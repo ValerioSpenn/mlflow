@@ -2909,8 +2909,32 @@ def test_gateway_endpoint_use_permission(fastapi_client, monkeypatch):
         endpoint_id = response.json()["endpoint"]["endpoint_id"]
         endpoint_name = response.json()["endpoint"]["name"]
 
+        response = requests.post(
+            url=fastapi_client.tracking_uri + "/api/3.0/mlflow/gateway/endpoints/create",
+            json={
+                "name": "endpoint_without_user2_permission",
+                "model_configs": [
+                    {
+                        "model_definition_id": model_definition_id,
+                        "linkage_type": "PRIMARY",
+                    }
+                ],
+            },
+            auth=(user1, password1),
+        )
+        response.raise_for_status()
+        unpermitted_endpoint_id = response.json()["endpoint"]["endpoint_id"]
+        unpermitted_endpoint_name = response.json()["endpoint"]["name"]
+
     # User2 without permission cannot invoke the endpoint
     with User(user2, password2, monkeypatch):
+        response = requests.get(
+            url=fastapi_client.tracking_uri + "/gateway/mlflow/v1/models",
+            auth=(user2, password2),
+        )
+        response.raise_for_status()
+        assert response.json() == {"object": "list", "data": []}
+
         response = requests.post(
             url=fastapi_client.tracking_uri + f"/gateway/{endpoint_name}/mlflow/invocations",
             json={"messages": [{"role": "user", "content": "test"}]},
@@ -2930,6 +2954,15 @@ def test_gateway_endpoint_use_permission(fastapi_client, monkeypatch):
 
     # User2 with USE permission can invoke
     with User(user2, password2, monkeypatch):
+        response = requests.get(
+            url=fastapi_client.tracking_uri + "/gateway/mlflow/v1/models",
+            auth=(user2, password2),
+        )
+        response.raise_for_status()
+        visible_endpoint_names = [model["id"] for model in response.json()["data"]]
+        assert visible_endpoint_names == [endpoint_name]
+        assert unpermitted_endpoint_name not in visible_endpoint_names
+
         response = requests.post(
             url=fastapi_client.tracking_uri + f"/gateway/{endpoint_name}/mlflow/invocations",
             json={"messages": [{"role": "user", "content": "test"}]},
@@ -2940,6 +2973,11 @@ def test_gateway_endpoint_use_permission(fastapi_client, monkeypatch):
 
     # Cleanup
     with User(user1, password1, monkeypatch):
+        requests.delete(
+            url=fastapi_client.tracking_uri + "/api/3.0/mlflow/gateway/endpoints/delete",
+            json={"endpoint_id": unpermitted_endpoint_id},
+            auth=(user1, password1),
+        ).raise_for_status()
         requests.delete(
             url=fastapi_client.tracking_uri + "/api/3.0/mlflow/gateway/endpoints/delete",
             json={"endpoint_id": endpoint_id},

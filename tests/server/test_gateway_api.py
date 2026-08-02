@@ -4,6 +4,8 @@ from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import openai
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -724,6 +726,110 @@ async def test_invocations_handler_embeddings(store: SqlAlchemyStore):
 def test_gateway_router_initialization():
     assert gateway_router is not None
     assert gateway_router.prefix == "/gateway"
+
+
+def test_list_models_openai_compatible_response(store: SqlAlchemyStore):
+    secret = store.create_gateway_secret(
+        secret_name="list-models-key",
+        secret_value={"api_key": "sk-test"},
+        provider="openai",
+    )
+    model_def = store.create_gateway_model_definition(
+        name="list-models-definition",
+        secret_id=secret.secret_id,
+        provider="openai",
+        model_name="gpt-4o",
+    )
+    endpoint = store.create_gateway_endpoint(
+        name="my-gateway-endpoint",
+        model_configs=[
+            GatewayEndpointModelConfig(
+                model_definition_id=model_def.model_definition_id,
+                linkage_type=GatewayModelLinkageType.PRIMARY,
+            )
+        ],
+    )
+
+    app = FastAPI()
+    app.include_router(gateway_router)
+    with patch("mlflow.server.gateway_api._get_store", return_value=store):
+        response = TestClient(app).get("/gateway/mlflow/v1/models")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "object": "list",
+        "data": [
+            {
+                "id": endpoint.name,
+                "object": "model",
+                "created": endpoint.created_at // 1000,
+                "owned_by": "mlflow",
+            }
+        ],
+    }
+
+
+def test_list_models_is_consumable_by_openai_sdk(store: SqlAlchemyStore):
+    secret = store.create_gateway_secret(
+        secret_name="openai-sdk-list-models-key",
+        secret_value={"api_key": "sk-test"},
+        provider="openai",
+    )
+    model_def = store.create_gateway_model_definition(
+        name="openai-sdk-list-models-definition",
+        secret_id=secret.secret_id,
+        provider="openai",
+        model_name="gpt-4o",
+    )
+    endpoint = store.create_gateway_endpoint(
+        name="openai-sdk-endpoint",
+        model_configs=[
+            GatewayEndpointModelConfig(
+                model_definition_id=model_def.model_definition_id,
+                linkage_type=GatewayModelLinkageType.PRIMARY,
+            )
+        ],
+    )
+
+    app = FastAPI()
+    app.include_router(gateway_router)
+
+    with (
+        TestClient(app) as app_client,
+        patch("mlflow.server.gateway_api._get_store", return_value=store),
+    ):
+
+        def send_to_fastapi(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET"
+            assert request.url.path == "/gateway/mlflow/v1/models"
+
+            response = app_client.request(
+                method=request.method,
+                url=request.url.raw_path.decode(),
+                headers=request.headers,
+                content=request.content,
+            )
+            return httpx.Response(
+                status_code=response.status_code,
+                headers=response.headers,
+                content=response.content,
+                request=request,
+            )
+
+        http_client = httpx.Client(transport=httpx.MockTransport(send_to_fastapi))
+        client = openai.OpenAI(
+            api_key="test",
+            base_url="http://testserver/gateway/mlflow/v1",
+            http_client=http_client,
+        )
+        response = client.models.list()
+        client.close()
+
+    assert response.object == "list"
+    assert [model.id for model in response.data] == [endpoint.name]
+    assert response.data[0].object == "model"
+    assert response.data[0].created == endpoint.created_at // 1000
+    assert response.data[0].owned_by == "mlflow"
 
 
 @pytest.mark.asyncio

@@ -162,6 +162,30 @@ For embeddings endpoints, the request body follows the OpenAI embeddings format.
 
 For teams already using the OpenAI chat completion style APIs, the gateway provides an OpenAI-compatible interface. Simply point your OpenAI client to the gateway's base URL and use your endpoint name as the model parameter. This lets you leverage existing OpenAI-based code while gaining the gateway's routing capabilities.
 
+Discover the endpoints available to the current user with the OpenAI-compatible Models API:
+
+```bash
+curl http://localhost:5000/gateway/mlflow/v1/models
+```
+
+The response uses endpoint names as model IDs:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "my-endpoint",
+      "object": "model",
+      "created": 1750000000,
+      "owned_by": "mlflow"
+    }
+  ]
+}
+```
+
+When authentication is enabled, the response includes only endpoints that the authenticated user has permission to use.
+
 See [OpenAI Chat Completions API Reference](https://platform.openai.com/docs/api-reference/chat) for complete documentation.
 
 <Tabs>
@@ -187,6 +211,9 @@ client = OpenAI(
     base_url="http://localhost:5000/gateway/mlflow/v1",
     api_key="",  # API key not needed, configured server-side
 )
+
+models = client.models.list()
+print([model.id for model in models.data])
 
 response = client.chat.completions.create(
     model="my-endpoint",

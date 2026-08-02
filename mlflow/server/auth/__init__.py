@@ -329,6 +329,7 @@ from mlflow.server.auth.routes import (
 )
 from mlflow.server.auth.sqlalchemy_store import SqlAlchemyStore
 from mlflow.server.fastapi_app import create_fastapi_app
+from mlflow.server.gateway_api import list_models as _list_gateway_models_endpoint
 from mlflow.server.handlers import (
     _add_static_prefix,
     _assert_array,
@@ -4626,6 +4627,9 @@ def _get_gateway_validator(path: str) -> Callable[[str, StarletteRequest], Await
         True if authorized, or None if no validation is needed for this route.
     """
 
+    if path == "/gateway/mlflow/v1/models":
+        return _get_require_authentication_validator()
+
     async def validator(username: str, request: StarletteRequest) -> bool:
         body = None
         if path in _ROUTES_NEEDING_BODY:
@@ -5038,6 +5042,16 @@ def _filter_get_mcp_server(username: str, body: bytes, request: StarletteRequest
     return json.dumps(data).encode()
 
 
+def _filter_gateway_models(username: str, body: bytes, request: StarletteRequest) -> bytes:
+    data = json.loads(body)
+    data["data"] = [
+        model
+        for model in data.get("data", [])
+        if _validate_gateway_use_permission(model["id"], username)
+    ]
+    return json.dumps(data).encode()
+
+
 FASTAPI_ENDPOINT_RESPONSE_FILTERS: dict[
     Callable[..., Any],
     Callable[[str, bytes, StarletteRequest], bytes],
@@ -5045,6 +5059,7 @@ FASTAPI_ENDPOINT_RESPONSE_FILTERS: dict[
     _search_mcp_servers_endpoint: _filter_search_mcp_servers,
     _search_all_access_endpoints_endpoint: _filter_search_mcp_endpoints,
     _get_mcp_server_endpoint: _filter_get_mcp_server,
+    _list_gateway_models_endpoint: _filter_gateway_models,
 }
 
 

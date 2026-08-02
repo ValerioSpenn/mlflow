@@ -58,7 +58,7 @@ from mlflow.gateway.providers.base import (
     TrafficRouteProvider,
 )
 from mlflow.gateway.providers.utils import provider_call_duration_ms
-from mlflow.gateway.schemas import chat, embeddings
+from mlflow.gateway.schemas import chat, embeddings, models
 from mlflow.gateway.tracing_utils import (
     aggregate_anthropic_messages_stream_chunks,
     aggregate_chat_stream_chunks,
@@ -737,6 +737,26 @@ async def invocations(endpoint_name: str, request: Request):
             status_code=400,
             detail="Invalid request: payload format must be either chat or embeddings",
         )
+
+
+@gateway_router.get("/mlflow/v1/models", response_model=models.ListModelsResponse)
+@translate_http_exception
+async def list_models():
+    """List MLflow Gateway endpoints using the OpenAI Models API format."""
+    store = _get_store()
+    _validate_store(store)
+
+    endpoints = sorted(store.list_gateway_endpoints(), key=lambda endpoint: endpoint.name)
+    return models.ListModelsResponse(
+        data=[
+            models.Model(
+                id=endpoint.name,
+                created=endpoint.created_at // 1000,
+                owned_by="mlflow",
+            )
+            for endpoint in endpoints
+        ]
+    )
 
 
 @gateway_router.post("/mlflow/v1/chat/completions", response_model=None)
